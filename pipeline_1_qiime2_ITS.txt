@@ -1,0 +1,114 @@
+##### Importing reads #####
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path manifest_ITS.tsv \
+  --output-path seqs.qza \
+  --input-format PairedEndFastqManifestPhred33V2
+qiime demux summarize \
+  --i-data seqs.qza \
+  --o-visualization seqs.qzv
+
+##### Removing primers #####
+qiime cutadapt trim-paired \
+  --i-demultiplexed-sequences seqs.qza \
+  --p-adapter-f GTGAATCATCGAATCTTTGAA \
+  --p-front-f TAGAGGAAGTAAAAGTCGTAA \
+  --p-adapter-r TTACGACTTTTACTTCCTCTA \
+  --p-front-r TTCAAAGATTCGATGATTCAC \
+  --o-trimmed-sequences seqs-trimmed.qza \
+  --verbose
+qiime demux summarize \
+  --i-data seqs-trimmed.qza \
+  --o-visualization seqs-trimmed.qzv
+
+##### Denoising with dada2 #####
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs seqs-trimmed.qza \
+  --p-trunc-len-f 0 \
+  --p-trunc-len-r 0 \
+  --p-n-threads 8 \
+  --o-table table.qza \
+  --o-representative-sequences rep-seqs.qza \
+  --o-denoising-stats denoising-stats.qza\
+  --verbose
+
+##### Taxonomic classification (reference database: UNITE database v.8 https://unite.ut.ee/repository.php) #####
+qiime feature-classifier fit-classifier-naive-bayes \
+  --i-reference-reads UNITE-ref-seqs.qza \
+  --i-reference-taxonomy UNITE-tax.qza \
+  --o-classifier UNITE-ITS_classifier.qza
+qiime feature-classifier classify-sklearn \
+  --i-classifier UNITE-ITS_classifier.qza \
+  --i-reads rep-seqs.qza \
+  --p-confidence=disable \
+  --p-n-jobs 8 \
+  --o-classification NB-unweighted-classification.qza
+qiime clawback generate-class-weights \
+  --i-reference-taxonomy UNITE-tax.qza \
+  --i-reference-sequences UNITE-ref-seqs.qza \
+  --i-samples table.qza \
+  --i-taxonomy-classification NB-unweighted-classification.qza \
+  --o-class-weight NB-weights.qza \
+  --verbose
+qiime feature-classifier fit-classifier-naive-bayes \
+  --i-reference-reads UNITE-ref-seqs.qza \
+  --i-reference-taxonomy UNITE-tax.qza \
+  --i-class-weight NB-weights.qza \
+  --o-classifier UNITE-ITS_WeightedClassifier.qza
+qiime feature-classifier classify-sklearn \
+  --i-classifier UNITE-ITS_WeightedClassifier.qza \
+  --i-reads rep-seqs.qza \
+  --p-confidence 0.95 \
+  --p-n-jobs 8 \
+  --o-classification taxonomy-weighted_95.qza
+qiime metadata tabulate \
+  --m-input-file taxonomy-weighted_95.qza \
+  --o-visualization taxonomy-weighted_95.qzv
+
+##### Exclude ASVs present in the negative control #####
+qiime feature-table filter-samples \
+  --i-table table.qza \
+  --m-metadata-file metadata.tsv \
+  --p-where "[type]='negativo'" \
+  --o-filtered-table table-Negative.qza
+qiime tools export \
+  --input-path table-Negative.qza \
+  --output-path exported
+biom convert -i exported/feature-table.biom -o exported/table-Negative.tsv --to-tsv
+# remove the first row from the file table-Negative.tsv
+qiime feature-table filter-features \
+  --i-table table.qza \
+  --m-metadata-file exported/table-Negative.tsv \
+  --p-exclude-ids \
+  --o-filtered-table table-clean.qza
+qiime feature-table summarize \
+  --i-table table-clean.qza \
+  --o-visualization table-clean.qzv 
+
+##### Normalization (scaling with ranked subsampling) #####
+qiime srs SRS \
+  --i-table table-clean.qza \
+  --p-c-min 3997 \
+  --o-normalized-table table-clean-norm.qza \
+  --verbose
+
+##### Export results #####
+qiime tools export \
+  --input-path rep-seqs.qza \
+  --output-path ExportedResults
+qiime tools export \
+  --input-path table-clean.qza \
+  --output-path ExportedResults
+biom convert -i ExportedResults/feature-table.biom -o ExportedResults/table-clean.tsv --to-tsv
+qiime tools export \
+  --input-path table-clean-norm.qza \
+  --output-path ExportedResults
+biom convert -i ExportedResults/feature-table.biom -o ExportedResults/table-clean-norm.tsv --to-tsv
+
+
+
+
+
+
+
+
